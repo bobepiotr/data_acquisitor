@@ -1,5 +1,6 @@
 import datetime
 import os.path
+import time
 from abc import ABC, abstractmethod
 from datetime import datetime
 from urllib import request
@@ -10,6 +11,7 @@ from sodapy import Socrata
 import logging
 
 from sys import argv
+import pandas as pd
 
 
 logging.basicConfig(level=logging.ERROR)
@@ -17,7 +19,8 @@ logging.basicConfig(level=logging.ERROR)
 
 class DataSet(ABC):
 
-    def __init__(self, filenames):
+    def __init__(self, name, filenames):
+        self.name = name
         self.filenames = filenames
 
     @abstractmethod
@@ -31,11 +34,17 @@ class DataSet(ABC):
     def get_filename(self):
         return self.filenames[0]
 
+    def update_download_time(self, download_time):
+        FILES_DATA[self.name] = [download_time]
+
+    def update_file_size(self, file_size):
+        FILES_DATA[self.name] = FILES_DATA[self.name].append(file_size)
+
 
 class CatalogDataSet(DataSet):
 
-    def __init__(self, filenames, domain, _id, url):
-        super().__init__(filenames)
+    def __init__(self, name, filenames, domain, _id, url):
+        super().__init__(name, filenames)
         self._id = _id
         self.domain = domain
         self.url = url
@@ -57,8 +66,8 @@ class CatalogDataSet(DataSet):
 
 class KaggleDataSet(DataSet):
 
-    def __init__(self, filenames, url):
-        super().__init__(filenames)
+    def __init__(self, name, filenames, url):
+        super().__init__(name, filenames)
         self.url = url
 
     def download(self):
@@ -96,10 +105,14 @@ class DataSetManager(object):
         self.dataset = dataset
 
     def download(self):
-        filename = self.dataset.get_filename()
-        print('Downloading ' + filename + '...')
+        print('Downloading ' + self.dataset.name + '...')
+        start_time = time.time_ns()
         self.dataset.download()
-        print('Done downloading ' + filename + '.')
+        end_time = time.time()
+        print('Done downloading ' + self.dataset.name + '. Total time = ' + (end_time - start_time))
+        download_time_ms = (end_time - start_time) / 1_000_000
+        files_size = self.measure_size()
+        FILES_DATA[self.dataset.name] = [download_time_ms, files_size]
 
     def remote_dataset_updated(self):
         path = FILES_LOCATION + self.dataset.get_filename()
@@ -111,6 +124,13 @@ class DataSetManager(object):
         for f in self.dataset.filenames:
             if not os.path.exists(FILES_LOCATION + f):
                 self.download()
+
+    def measure_size(self):
+        total_size = 0
+        for f in self.dataset.filenames:
+            total_size += os.path.getsize(FILES_LOCATION + f)
+
+        return total_size / 1024 / 1024
 
 
 def assure_files_exists(datasets):
@@ -141,28 +161,32 @@ if __name__ == '__main__':
     mode = argv[1] if len(argv) > 1 else None  # allowed values: init - download all files, NONE - update all files
 
     FILES_LOCATION = './data/'
+    FILES_DATA = {}
 
     if not os.path.exists(FILES_LOCATION):
         os.makedirs(FILES_LOCATION)
 
     CRIMES_FILENAMES = ['crimes_data.json']
+    CRIMES_DATASET_NAME = 'crimes_dataset'
     CRIMES_DOMAIN = 'data.lacity.org'
     CRIMES_ID = '63jg-8b9z'
     CRIMES_URL = 'https://data.lacity.org/api/views/63jg-8b9z/rows.json?accessType=DOWNLOAD'
 
     COLLISIONS_FILENAMES = ['collisions_data.xml']
+    COLLISIONS_DATASET_NAME = 'collisions_dataset'
     COLLISIONS_DOMAIN = 'data.lacity.org'
     COLLISIONS_ID = 'd5tf-ez2w'
     COLLISIONS_URL = 'https://data.lacity.org/api/views/d5tf-ez2w/rows.xml?accessType=DOWNLOAD'
 
     WEATHER_FILENAMES = ['pressure.csv', 'temperature.csv', 'weather_description.csv',
                          'wind_direction.csv', 'wind_speed.csv']
+    WEATHER_DATASET_NAME = 'weather_dataset'
     WEATHER_URL = 'selfishgene/historical-hourly-weather-data'
 
     DATASETS = [
-        CatalogDataSet(CRIMES_FILENAMES, CRIMES_DOMAIN, CRIMES_ID, CRIMES_URL),
-        CatalogDataSet(COLLISIONS_FILENAMES, COLLISIONS_DOMAIN, COLLISIONS_ID, COLLISIONS_URL),
-        KaggleDataSet(WEATHER_FILENAMES, WEATHER_URL)
+        CatalogDataSet(CRIMES_DATASET_NAME, CRIMES_FILENAMES, CRIMES_DOMAIN, CRIMES_ID, CRIMES_URL),
+        CatalogDataSet(COLLISIONS_DATASET_NAME, COLLISIONS_FILENAMES, COLLISIONS_DOMAIN, COLLISIONS_ID, COLLISIONS_URL),
+        KaggleDataSet(WEATHER_DATASET_NAME, WEATHER_FILENAMES, WEATHER_URL)
     ]
 
     if mode == 'init':
@@ -170,3 +194,7 @@ if __name__ == '__main__':
     else:
         assure_files_exists(DATASETS)
         update_all(DATASETS)
+
+    download_times = pd.DataFrame(FILES_DATA, index=['Download time [ns]', 'Total files size [MB]'])
+    current_date = datetime.now().strftime("%Y-%m-%d_%H.%M.%S")
+    download_times.to_csv('./acquisition_info_' + current_date + '.csv')
