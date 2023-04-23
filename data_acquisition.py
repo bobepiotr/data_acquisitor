@@ -1,18 +1,16 @@
 import datetime
+import logging
 import os.path
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
+from sys import argv
 from urllib import request
 from zipfile import ZipFile
 
 import kaggle
-from sodapy import Socrata
-import logging
-
-from sys import argv
 import pandas as pd
-
+from sodapy import Socrata
 
 logging.basicConfig(level=logging.ERROR)
 
@@ -31,14 +29,9 @@ class DataSet(ABC):
     def get_last_mod_date(self):
         pass
 
-    def get_filename(self):
-        return self.filenames[0]
+    def get_filename(self, idx=0):
 
-    def update_download_time(self, download_time):
-        FILES_DATA[self.name] = [download_time]
-
-    def update_file_size(self, file_size):
-        FILES_DATA[self.name] = FILES_DATA[self.name].append(file_size)
+        return self.filenames[idx]
 
 
 class CatalogDataSet(DataSet):
@@ -59,9 +52,6 @@ class CatalogDataSet(DataSet):
             metadata = client.get_metadata(self._id)
 
         return datetime.fromtimestamp(metadata['viewLastModified'])
-
-    def get_filename(self):
-        return self.filenames[0]
 
 
 class KaggleDataSet(DataSet):
@@ -89,9 +79,6 @@ class KaggleDataSet(DataSet):
 
         return api.dataset_view(self.url).lastUpdated
 
-    def get_filename(self):
-        return self.filenames[0]
-
     @staticmethod
     def __remove_zip_file():
         path = FILES_LOCATION + 'historical-hourly-weather-data.zip'
@@ -108,35 +95,39 @@ class DataSetManager(object):
         print('Downloading ' + self.dataset.name + '...')
         start_time = time.time_ns()
         self.dataset.download()
-        end_time = time.time()
-        print('Done downloading ' + self.dataset.name + '. Total time = ' + (end_time - start_time))
-        download_time_ms = (end_time - start_time) / 1_000_000
-        files_size = self.measure_size()
-        FILES_DATA[self.dataset.name] = [download_time_ms, files_size]
+        end_time = time.time_ns()
+        download_time_s = round((end_time - start_time) / 1_000_000_000, 3)
+        files_size_mb = self.measure_size()
+        print(f'Done downloading {self.dataset.name}. Total time = {download_time_s}s, total size =  {files_size_mb}MB')
+        FILES_DATA[self.dataset.name] = [download_time_s, files_size_mb]
 
     def remote_dataset_updated(self):
-        path = FILES_LOCATION + self.dataset.get_filename()
+        path = FILES_LOCATION + self.dataset.get_filename(0)
         last_modified_date = datetime.fromtimestamp(os.path.getmtime(path))
 
         return last_modified_date < self.dataset.get_last_mod_date()
 
-    def download_not_existing_files(self):
+    def assure_dataset_consistent(self):
         for f in self.dataset.filenames:
             if not os.path.exists(FILES_LOCATION + f):
-                self.download()
+                print('Dataset ' + self.dataset.name + ' inconsistent.')
+                self.download()  # at least one file missing -> download whole dataset again
+                return True
+        print('Dataset ' + self.dataset.name + ' consistent.')
+        return False
 
     def measure_size(self):
         total_size = 0
         for f in self.dataset.filenames:
             total_size += os.path.getsize(FILES_LOCATION + f)
 
-        return total_size / 1024 / 1024
+        return round(total_size / 1024 / 1024, 3)
 
 
 def assure_files_exists(datasets):
     for d in datasets:
         m = DataSetManager(d)
-        m.download_not_existing_files()
+        m.assure_dataset_consistent()
 
 
 def download_all(datasets):
@@ -148,12 +139,19 @@ def download_all(datasets):
 def update_all(datasets):
     for d in datasets:
         m = DataSetManager(d)
-        filename = d.get_filename()
         if m.remote_dataset_updated():
-            print('Remote file updated. Downloading file ' + filename + '...')
+            print('Remote dataset updated. Downloading dataset ' + m.dataset.name + '...')
             m.download()
         else:
-            print('File ' + filename + ' up to date.')
+            print('Dataset ' + m.dataset.name + ' up to date.')
+
+
+def set_up():
+    if not os.path.exists(FILES_LOCATION):
+        os.makedirs(FILES_LOCATION)
+
+    if not os.path.exists(LOGS_LOCATION):
+        os.makedirs(LOGS_LOCATION)
 
 
 if __name__ == '__main__':
@@ -161,10 +159,10 @@ if __name__ == '__main__':
     mode = argv[1] if len(argv) > 1 else None  # allowed values: init - download all files, NONE - update all files
 
     FILES_LOCATION = './data/'
+    LOGS_LOCATION = './data_logs/'
     FILES_DATA = {}
 
-    if not os.path.exists(FILES_LOCATION):
-        os.makedirs(FILES_LOCATION)
+    set_up()
 
     CRIMES_FILENAMES = ['crimes_data.json']
     CRIMES_DATASET_NAME = 'crimes_dataset'
@@ -195,6 +193,6 @@ if __name__ == '__main__':
         assure_files_exists(DATASETS)
         update_all(DATASETS)
 
-    download_times = pd.DataFrame(FILES_DATA, index=['Download time [ns]', 'Total files size [MB]'])
+    download_times = pd.DataFrame(FILES_DATA, index=['Download time [s]', 'Total files size [MB]'])
     current_date = datetime.now().strftime("%Y-%m-%d_%H.%M.%S")
-    download_times.to_csv('./acquisition_info_' + current_date + '.csv')
+    download_times.to_csv(LOGS_LOCATION + 'acquisition_info_' + current_date + '.csv')
