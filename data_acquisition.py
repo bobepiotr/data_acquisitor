@@ -37,7 +37,7 @@ class DataSet(ABC):
         self.filenames = filenames
 
     @abstractmethod
-    def download(self):
+    def download(self, **kwargs):
         pass
 
     @abstractmethod
@@ -56,7 +56,7 @@ class CatalogDataSet(DataSet):
         self.domain = domain
         self.url = url
 
-    def download(self):
+    def download(self, **kwargs):
         request.urlretrieve(self.url, FILES_LOCATION + self.filenames[0])
 
         return True
@@ -74,16 +74,21 @@ class KaggleDataSet(DataSet):
         super().__init__(name, filenames)
         self.url = url
 
-    def download(self):
+    def download(self, **kwargs):
         api = kaggle.KaggleApi()
         api.authenticate()
 
-        api.dataset_download_files(self.url, path=FILES_LOCATION)
-        zf = ZipFile(FILES_LOCATION + self.url.split('/')[-1] + '.zip')
-        zf.extractall(path=FILES_LOCATION)
-        zf.close()
-
-        self.__remove_zip_file()
+        if 'files_to_download' in kwargs.keys():
+            files_to_download = kwargs['files_to_download']
+            for f in files_to_download:
+                api.dataset_download_file(self.url, path=FILES_LOCATION, file_name=f)
+                self.__unpack_zip_file(f)
+                self.__remove_zip_file(f)
+        else:
+            api.dataset_download_files(self.url, path=FILES_LOCATION)
+            dataset_name = self.url.split('/')[-1]
+            self.__unpack_zip_file(dataset_name)
+            self.__remove_zip_file(dataset_name)
 
         return True
 
@@ -94,10 +99,16 @@ class KaggleDataSet(DataSet):
         return api.dataset_view(self.url).lastUpdated
 
     @staticmethod
-    def __remove_zip_file():
-        path = FILES_LOCATION + 'historical-hourly-weather-data.zip'
+    def __remove_zip_file(filename):
+        path = FILES_LOCATION + filename + '.zip'
         if os.path.exists(path):
             os.remove(path)
+
+    @staticmethod
+    def __unpack_zip_file(filename):
+        zf = ZipFile(FILES_LOCATION + filename + '.zip')
+        zf.extractall(path=FILES_LOCATION)
+        zf.close()
 
 
 class DataSetManager(object):
@@ -105,10 +116,14 @@ class DataSetManager(object):
     def __init__(self, dataset: DataSet):
         self.dataset = dataset
 
-    def download(self):
-        print('Downloading ' + self.dataset.name + '...')
+    def download(self, **kwargs):
+        if 'files_to_download' in kwargs.keys():
+            filenames = kwargs['files_to_download']
+            print(f'Downloading files {filenames} from dataset {self.dataset.name}.')
+        else:
+            print(f'Downloading {self.dataset.name}...')
         start_time = time.time_ns()
-        self.dataset.download()
+        self.dataset.download(**kwargs)
         end_time = time.time_ns()
         download_time_s = round((end_time - start_time) / 1_000_000_000, 3)
         files_size_mb = self.measure_size()
@@ -137,7 +152,7 @@ class DataSetManager(object):
 
         if missing_files:
             print(f'Dataset {self.dataset.name} inconsistent. Missing files: {missing_files}')
-            self.download()  # at least one file missing -> download whole dataset again
+            self.download(files_to_download=missing_files)  # at least one file missing -> download whole dataset again
 
         print('Dataset ' + self.dataset.name + ' consistent.')
 
