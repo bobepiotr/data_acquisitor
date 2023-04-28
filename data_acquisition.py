@@ -1,3 +1,4 @@
+import csv
 import datetime
 import logging
 import os.path
@@ -15,6 +16,20 @@ from sodapy import Socrata
 logging.basicConfig(level=logging.ERROR)
 
 
+class Log(object):
+    HEADERS = ['datetime', 'dataset', 'operation', 'cause', 'error']
+
+    def __init__(self, timestamp, dataset_name, operation, cause, error):
+        self.timestamp = timestamp
+        self.dataset_name = dataset_name
+        self.operation = operation
+        self.cause = cause
+        self.error = error
+
+    def to_list(self):
+        return [self.timestamp, self.dataset_name, self.operation, self.cause, self.error]
+
+
 class DataSet(ABC):
 
     def __init__(self, name, filenames):
@@ -30,7 +45,6 @@ class DataSet(ABC):
         pass
 
     def get_filename(self, idx=0):
-
         return self.filenames[idx]
 
 
@@ -99,22 +113,35 @@ class DataSetManager(object):
         download_time_s = round((end_time - start_time) / 1_000_000_000, 3)
         files_size_mb = self.measure_size()
         print(f'Done downloading {self.dataset.name}. Total time = {download_time_s}s, total size =  {files_size_mb}MB')
-        FILES_DATA[self.dataset.name] = [download_time_s, files_size_mb]
+        ACQUISITION_INFO[self.dataset.name] = [download_time_s, files_size_mb]
 
     def remote_dataset_updated(self):
-        path = FILES_LOCATION + self.dataset.get_filename(0)
-        last_modified_date = datetime.fromtimestamp(os.path.getmtime(path))
+        outdated_files = []
+        for f in self.dataset.filenames:
+            path = FILES_LOCATION + f
+            last_modified_date = datetime.fromtimestamp(os.path.getmtime(path))
+            dataset_last_modified_date = self.dataset.get_last_mod_date()
+            if last_modified_date < dataset_last_modified_date:
+                outdated_files.append(f)
 
-        return last_modified_date < self.dataset.get_last_mod_date()
+        if outdated_files:
+            print(f'Dataset {self.dataset.name} outdated. Outdated files {outdated_files}')
+
+        return bool(outdated_files), outdated_files
 
     def assure_dataset_consistent(self):
+        missing_files = []
         for f in self.dataset.filenames:
             if not os.path.exists(FILES_LOCATION + f):
-                print('Dataset ' + self.dataset.name + ' inconsistent.')
-                self.download()  # at least one file missing -> download whole dataset again
-                return True
+                missing_files.append(f)
+
+        if missing_files:
+            print(f'Dataset {self.dataset.name} inconsistent. Missing files: {missing_files}')
+            self.download()  # at least one file missing -> download whole dataset again
+
         print('Dataset ' + self.dataset.name + ' consistent.')
-        return False
+
+        return missing_files
 
     def measure_size(self):
         total_size = 0
@@ -127,21 +154,27 @@ class DataSetManager(object):
 def assure_files_exists(datasets):
     for d in datasets:
         m = DataSetManager(d)
-        m.assure_dataset_consistent()
+        missing_files = m.assure_dataset_consistent()
+        if missing_files:
+            persist_log(
+                Log(datetime.now(), d.name, 'DOWNLOAD', f'Dataset inconsistent. Missing files {missing_files}', None))
 
 
 def download_all(datasets):
     for d in datasets:
         m = DataSetManager(d)
         m.download()
+        persist_log(Log(datetime.now(), d.name, 'INIT', 'Init dataset', None))
 
 
 def update_all(datasets):
     for d in datasets:
         m = DataSetManager(d)
-        if m.remote_dataset_updated():
+        dataset_updated, outdated_files = m.remote_dataset_updated()
+        if dataset_updated:
             print('Remote dataset updated. Downloading dataset ' + m.dataset.name + '...')
             m.download()
+            persist_log(Log(datetime.now(), d.name, 'UPDATE', f'Outdated files: {outdated_files}', None))
         else:
             print('Dataset ' + m.dataset.name + ' up to date.')
 
@@ -150,17 +183,35 @@ def set_up():
     if not os.path.exists(FILES_LOCATION):
         os.makedirs(FILES_LOCATION)
 
+    if not os.path.exists(ACQUISITION_INFO_LOCATION):
+        os.makedirs(ACQUISITION_INFO_LOCATION)
+
     if not os.path.exists(LOGS_LOCATION):
         os.makedirs(LOGS_LOCATION)
+
+    logs_path = os.path.join(LOGS_LOCATION, LOGS_FILENAME)
+    if not os.path.exists(logs_path):
+        with open(logs_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(Log.HEADERS)
+
+
+def persist_log(log: Log):
+    with open('./logs/acquisition_log.csv', 'a', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(log.to_list())
 
 
 if __name__ == '__main__':
 
-    mode = argv[1] if len(argv) > 1 else None  # allowed values: init - download all files, NONE - update all files
+    # allowed values: init - download all files, NONE - assure all datasets consistent and up to date
+    mode = argv[1] if len(argv) > 1 else None
 
     FILES_LOCATION = './data/'
-    LOGS_LOCATION = './data_logs/'
-    FILES_DATA = {}
+    ACQUISITION_INFO_LOCATION = './data_logs/'
+    ACQUISITION_INFO = {}
+    LOGS_LOCATION = './logs/'
+    LOGS_FILENAME = 'acquisition_log.csv'
 
     set_up()
 
@@ -177,7 +228,7 @@ if __name__ == '__main__':
     COLLISIONS_URL = 'https://data.lacity.org/api/views/d5tf-ez2w/rows.xml?accessType=DOWNLOAD'
 
     WEATHER_FILENAMES = ['pressure.csv', 'temperature.csv', 'weather_description.csv',
-                         'wind_direction.csv', 'wind_speed.csv']
+                         'wind_direction.csv', 'wind_speed.csv', 'humidity.csv']
     WEATHER_DATASET_NAME = 'weather_dataset'
     WEATHER_URL = 'selfishgene/historical-hourly-weather-data'
 
@@ -193,6 +244,6 @@ if __name__ == '__main__':
         assure_files_exists(DATASETS)
         update_all(DATASETS)
 
-    download_times = pd.DataFrame(FILES_DATA, index=['Download time [s]', 'Total files size [MB]'])
+    download_times = pd.DataFrame(ACQUISITION_INFO, index=['Download time [s]', 'Total files size [MB]'])
     current_date = datetime.now().strftime("%Y-%m-%d_%H.%M.%S")
-    download_times.to_csv(LOGS_LOCATION + 'acquisition_info_' + current_date + '.csv')
+    download_times.to_csv(ACQUISITION_INFO_LOCATION + 'acquisition_info_' + current_date + '.csv')
