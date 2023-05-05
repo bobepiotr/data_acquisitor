@@ -119,15 +119,15 @@ class DataSetManager(object):
     def download(self, **kwargs):
         if 'files_to_download' in kwargs.keys():
             filenames = kwargs['files_to_download']
-            print(f'Downloading files {filenames} from dataset {self.dataset.name}.')
+            log(f'Downloading files {filenames} from dataset \'{self.dataset.name}\'.')
         else:
-            print(f'Downloading {self.dataset.name}...')
+            log(f'Downloading \'{self.dataset.name}\'...')
         start_time = time.time_ns()
         self.dataset.download(**kwargs)
         end_time = time.time_ns()
         download_time_s = round((end_time - start_time) / 1_000_000_000, 3)
         files_size_mb = self.measure_size()
-        print(f'Done downloading {self.dataset.name}. Total time = {download_time_s}s, total size =  {files_size_mb}MB')
+        log(f'Done downloading \'{self.dataset.name}\'. Total time = {download_time_s}s, total size =  {files_size_mb}MB')
         ACQUISITION_INFO[self.dataset.name] = [download_time_s, files_size_mb]
 
     def remote_dataset_updated(self):
@@ -140,7 +140,7 @@ class DataSetManager(object):
                 outdated_files.append(f)
 
         if outdated_files:
-            print(f'Dataset {self.dataset.name} outdated. Outdated files {outdated_files}')
+            log(f'Dataset \'{self.dataset.name}\' outdated. Outdated files {outdated_files}')
 
         return bool(outdated_files), outdated_files
 
@@ -151,10 +151,10 @@ class DataSetManager(object):
                 missing_files.append(f)
 
         if missing_files:
-            print(f'Dataset {self.dataset.name} inconsistent. Missing files: {missing_files}')
+            log(f'Dataset \'{self.dataset.name}\' inconsistent. Missing files: {missing_files}')
             self.download(files_to_download=missing_files)  # at least one file missing -> download whole dataset again
 
-        print('Dataset ' + self.dataset.name + ' consistent.')
+        log('Dataset \'' + self.dataset.name + '\' consistent.')
 
         return missing_files
 
@@ -187,11 +187,11 @@ def update_all(datasets):
         m = DataSetManager(d)
         dataset_updated, outdated_files = m.remote_dataset_updated()
         if dataset_updated:
-            print('Remote dataset updated. Downloading dataset ' + m.dataset.name + '...')
+            log('Remote dataset updated. Downloading dataset \'' + m.dataset.name + '\'...')
             m.download()
             persist_log(Log(datetime.now(), d.name, 'UPDATE', f'Outdated files: {outdated_files}', None))
         else:
-            print('Dataset ' + m.dataset.name + ' up to date.')
+            log('Dataset \'' + m.dataset.name + '\' up to date.')
 
 
 def set_up():
@@ -217,12 +217,19 @@ def persist_log(log: Log):
         writer.writerow(log.to_list())
 
 
+def log(content):
+    current_dt = datetime.now()
+    print(f'[{current_dt}: {APP_NAME}] {content}')
+
+
 if __name__ == '__main__':
 
     # allowed values: init - download all files, NONE - assure all datasets consistent and up to date
     mode = argv[1] if len(argv) > 1 else None
 
-    FILES_LOCATION = './data/'
+    APP_NAME = 'ACQ_TOOL'
+
+    FILES_LOCATION = os.getenv('DATA_ACK_FILES_LOCATION', './data/')
     ACQUISITION_INFO_LOCATION = './data_logs/'
     ACQUISITION_INFO = {}
     LOGS_LOCATION = './logs/'
