@@ -106,9 +106,11 @@ class KaggleDataSet(DataSet):
 
     @staticmethod
     def __unpack_zip_file(filename):
-        zf = ZipFile(FILES_LOCATION + filename + '.zip')
-        zf.extractall(path=FILES_LOCATION)
-        zf.close()
+        path = FILES_LOCATION + filename + '.zip'
+        if os.path.exists(path):
+            zf = ZipFile(path)
+            zf.extractall(path=FILES_LOCATION)
+            zf.close()
 
 
 class DataSetManager(object):
