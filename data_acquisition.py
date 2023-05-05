@@ -229,6 +229,7 @@ if __name__ == '__main__':
 
     APP_NAME = 'ACQ_TOOL'
 
+    # To specify files location set DATA_ACK_FILES_LOCATION env variable
     FILES_LOCATION = os.getenv('DATA_ACK_FILES_LOCATION', './data/')
     ACQUISITION_INFO_LOCATION = './data_logs/'
     ACQUISITION_INFO = {}
@@ -250,7 +251,7 @@ if __name__ == '__main__':
     COLLISIONS_URL = 'https://data.lacity.org/api/views/d5tf-ez2w/rows.xml?accessType=DOWNLOAD'
 
     WEATHER_FILENAMES = ['pressure.csv', 'temperature.csv', 'weather_description.csv',
-                         'wind_direction.csv', 'wind_speed.csv', 'humidity.csv']
+                         'wind_direction.csv', 'wind_speed.csv', 'humidity.csv', 'city_attributes.csv']
     WEATHER_DATASET_NAME = 'weather_dataset'
     WEATHER_URL = 'selfishgene/historical-hourly-weather-data'
 
