@@ -240,11 +240,11 @@ if __name__ == '__main__':
 
     set_up()
 
-    CRIMES_FILENAMES = ['crimes_data.json']
+    CRIMES_FILENAMES = ['crimes_data.csv']
     CRIMES_DATASET_NAME = 'crimes_dataset'
     CRIMES_DOMAIN = 'data.lacity.org'
     CRIMES_ID = '63jg-8b9z'
-    CRIMES_URL = 'https://data.lacity.org/api/views/63jg-8b9z/rows.json?accessType=DOWNLOAD'
+    CRIMES_URL = 'https://data.lacity.org/api/views/63jg-8b9z/rows.csv?accessType=DOWNLOAD'
 
     COLLISIONS_FILENAMES = ['collisions_data.xml']
     COLLISIONS_DATASET_NAME = 'collisions_dataset'
