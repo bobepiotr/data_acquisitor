@@ -44,9 +44,6 @@ class DataSet(ABC):
     def get_last_mod_date(self):
         pass
 
-    def get_filename(self, idx=0):
-        return self.filenames[idx]
-
 
 class CatalogDataSet(DataSet):
 
@@ -124,6 +121,7 @@ class DataSetManager(object):
             log(f'Downloading files {filenames} from dataset \'{self.dataset.name}\'.')
         else:
             log(f'Downloading \'{self.dataset.name}\'...')
+            filenames = self.dataset.filenames
         start_time = time.time_ns()
         self.dataset.download(**kwargs)
         end_time = time.time_ns()
@@ -132,17 +130,23 @@ class DataSetManager(object):
         log(f'Done downloading \'{self.dataset.name}\'. Total time = {download_time_s}s, total size =  {files_size_mb}MB')
         ACQUISITION_INFO[self.dataset.name] = [download_time_s, files_size_mb]
 
+        return filenames
+
     def remote_dataset_updated(self):
         outdated_files = []
+        dataset_last_modified_date = self.dataset.get_last_mod_date()
         for f in self.dataset.filenames:
             path = FILES_LOCATION + f
             last_modified_date = datetime.fromtimestamp(os.path.getmtime(path))
-            dataset_last_modified_date = self.dataset.get_last_mod_date()
             if last_modified_date < dataset_last_modified_date:
                 outdated_files.append(f)
 
         if outdated_files:
-            log(f'Dataset \'{self.dataset.name}\' outdated. Outdated files {outdated_files}')
+            log(f'Dataset \'{self.dataset.name}\' outdated. Latest dataset update at {dataset_last_modified_date}. '
+                f'Outdated files {outdated_files}.')
+        else:
+            log(f'Local dataset \'{self.dataset.name}\' up to date. '
+                f'Remote dataset last updated on {dataset_last_modified_date}.')
 
         return bool(outdated_files), outdated_files
 
@@ -169,31 +173,39 @@ class DataSetManager(object):
 
 
 def assure_files_exists(datasets):
+    downloaded_files = []
     for d in datasets:
         m = DataSetManager(d)
         missing_files = m.assure_dataset_consistent()
         if missing_files:
             persist_log(
                 Log(datetime.now(), d.name, 'DOWNLOAD', f'Dataset inconsistent. Missing files {missing_files}', None))
+            downloaded_files += missing_files
+
+    return downloaded_files
 
 
 def download_all(datasets):
+    downloaded_files = []
     for d in datasets:
         m = DataSetManager(d)
-        m.download()
+        downloaded_files += m.download()
         persist_log(Log(datetime.now(), d.name, 'INIT', 'Init dataset', None))
+
+    return downloaded_files
 
 
 def update_all(datasets):
+    downloaded_files = []
     for d in datasets:
         m = DataSetManager(d)
         dataset_updated, outdated_files = m.remote_dataset_updated()
         if dataset_updated:
             log('Remote dataset updated. Downloading dataset \'' + m.dataset.name + '\'...')
-            m.download()
+            downloaded_files += m.download()
             persist_log(Log(datetime.now(), d.name, 'UPDATE', f'Outdated files: {outdated_files}', None))
-        else:
-            log('Dataset \'' + m.dataset.name + '\' up to date.')
+
+    return downloaded_files
 
 
 def set_up():
@@ -224,6 +236,12 @@ def log(content):
     print(f'[{current_dt}: {APP_NAME}] {content}')
 
 
+def persist_download_information():
+    with open(DOWNLOAD_INFO_FILE_PATH, 'w') as f:
+        for df in DOWNLOADED_FILES:
+            f.write(df + '\n')
+
+
 if __name__ == '__main__':
 
     # allowed values: init - download all files, NONE - assure all datasets consistent and up to date
@@ -237,6 +255,8 @@ if __name__ == '__main__':
     ACQUISITION_INFO = {}
     LOGS_LOCATION = './logs/'
     LOGS_FILENAME = 'acquisition_log.csv'
+    DOWNLOAD_INFO_FILE_PATH = os.getenv('DOWNLOAD_INFO_FILE_PATH', 'download_info.txt')
+    DOWNLOADED_FILES = []
 
     set_up()
 
@@ -246,11 +266,11 @@ if __name__ == '__main__':
     CRIMES_ID = '63jg-8b9z'
     CRIMES_URL = 'https://data.lacity.org/api/views/63jg-8b9z/rows.csv?accessType=DOWNLOAD'
 
-    COLLISIONS_FILENAMES = ['collisions_data.xml']
+    COLLISIONS_FILENAMES = ['collisions_data.csv']
     COLLISIONS_DATASET_NAME = 'collisions_dataset'
     COLLISIONS_DOMAIN = 'data.lacity.org'
     COLLISIONS_ID = 'd5tf-ez2w'
-    COLLISIONS_URL = 'https://data.lacity.org/api/views/d5tf-ez2w/rows.xml?accessType=DOWNLOAD'
+    COLLISIONS_URL = 'https://data.lacity.org/api/views/d5tf-ez2w/rows.csv?accessType=DOWNLOAD'
 
     WEATHER_FILENAMES = ['pressure.csv', 'temperature.csv', 'weather_description.csv',
                          'wind_direction.csv', 'wind_speed.csv', 'humidity.csv', 'city_attributes.csv']
@@ -263,12 +283,17 @@ if __name__ == '__main__':
         KaggleDataSet(WEATHER_DATASET_NAME, WEATHER_FILENAMES, WEATHER_URL)
     ]
 
+    log(f'Files will be saved in {FILES_LOCATION}.')
+    log(f'Download info will be saved in {DOWNLOAD_INFO_FILE_PATH}.')
+
     if mode == 'init':
-        download_all(DATASETS)
+        DOWNLOADED_FILES += download_all(DATASETS)
     else:
-        assure_files_exists(DATASETS)
-        update_all(DATASETS)
+        DOWNLOADED_FILES += assure_files_exists(DATASETS)
+        DOWNLOADED_FILES += update_all(DATASETS)
 
     download_times = pd.DataFrame(ACQUISITION_INFO, index=['Download time [s]', 'Total files size [MB]'])
     current_date = datetime.now().strftime("%Y-%m-%d_%H.%M.%S")
     download_times.to_csv(ACQUISITION_INFO_LOCATION + 'acquisition_info_' + current_date + '.csv')
+
+    persist_download_information()
