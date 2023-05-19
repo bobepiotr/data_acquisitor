@@ -67,17 +67,18 @@ class LogManager(object):
         def to_list(self):
             return [self.timestamp, self.process_name, self.status, self.total_time, self.maps_time, self.reduces_time, self.errors]
 
-    def __init__(self, log_path):
+    def __init__(self, log_path, process_name):
         self.__assure_file_system_consistent()
 
         self.log_path = log_path
+        self.process_name = process_name
 
     def append_log_data(self):
         status, total_time, maps_time, reduces_time, errors = self.__extract_process_data()
         current_datetime = datetime.now()
-        log_data = self.Log(current_datetime, 'Process.jar', status, total_time, maps_time, reduces_time, errors)
+        log_data = self.Log(current_datetime, self.process_name, status, total_time, maps_time, reduces_time, errors)
         self.__append_to_log_file(log_data.to_list())
-        log(f'Preprocessed data has been appended to {LOG_FILE_PATH}.')
+        log(f'Preprocessed data from process \'{self.process_name}\' has been appended to {LOG_FILE_PATH}.')
 
     def __assure_file_system_consistent(self):
         if not os.path.exists(LOG_FILE_LOCATION):
@@ -113,13 +114,14 @@ def log(content, level='INFO'):
 
 if __name__ == '__main__':
 
-    APP_NAME = 'log_prcsr'
+    APP_NAME = 'LG_PRCSR'
 
-    if len(argv) <= 1:
-        log('Required parameter \'LOG_TO_PREPROCESS_PATH\' not supplied at position 1.', level='ERROR')
+    if len(argv) <= 2:
+        log('Required parameters not supplied at position 1 and 2.', level='ERROR')
         exit(1)
 
     LOG_TO_PREPROCESS_PATH = argv[1]
+    PROCESS_NAME = argv[2]
 
     LOG_FILE_LOCATION = os.getenv('HADOOP_LOGS_FILE_LOCATION', './hadoop_logs/')
     LOG_FILE_NAME = os.getenv('HADOOP_LOGS_FILE_NAME', 'hadoop_logs.csv')
@@ -127,5 +129,5 @@ if __name__ == '__main__':
 
     # log(f'Preprocessed logs file set to {LOG_FILE_PATH}.')
 
-    m = LogManager(LOG_TO_PREPROCESS_PATH)
+    m = LogManager(LOG_TO_PREPROCESS_PATH, PROCESS_NAME)
     m.append_log_data()

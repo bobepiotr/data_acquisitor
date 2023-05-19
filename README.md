@@ -17,6 +17,7 @@ Set HADOOP_LOGS_FILE_NAME env variable to customize csv log name
 
 Arguments:
 1. Path to the log to preprocess [required]
+2. Map-Reduce process name [required]
 
 Example usage:  
 `export HADOOP_LOGS_FILE_LOCATION="/custom/path/to/csv/log/"`  
